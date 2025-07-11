@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>アドオン実績解除ツールby clover</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #e9e9e9;
+      color: #333;
+      padding: 30px;
+    }
+    h1 {
+      margin-bottom: 20px;
+    }
+    .input-group {
+      margin-bottom: 20px;
+    }
+    button {
+      padding: 10px 15px;
+      background-color: #00ff2a;
+      border: none;
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #76ff81;
+    }
+    #result {
+      margin-top: 15px;
+      padding: 15px;
+      background-color: #d0ffd2;
+      border: 1px solid #4fffad;
+      border-radius: 4px;
+      min-height: 40px;
+    }
+  </style>
+</head>
+<body>
+  <h1>アドオン実績解除ツールby clover</h1>
+
+  <div class="input-group">
+    <label for="addonFile">.mcpack または .mcaddon ファイルを選択：</label><br />
+    <input type="file" id="addonFile" accept=".mcpack,.mcaddon" />
+  </div>
+
+  <button id="downloadModifiedBtn" disabled>実績解除可能アドオンをダウンロード</button>
+
+  <div id="result">ここに解析結果が表示されます。</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.0/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+
+  <script>
+    (() => {
+      const input = document.getElementById("addonFile");
+      const result = document.getElementById("result");
+      const downloadBtn = document.getElementById("downloadModifiedBtn");
+      let modifiedBlob = null;
+      let modifiedName = "";
+
+      input.addEventListener("change", async () => {
+        const file = input.files[0];
+        if (!file) return;
+
+        result.textContent = "読み込み・変更…";
+
+        try {
+          const ext = file.name.split(".").pop().toLowerCase();
+          const zip = await JSZip.loadAsync(file);
+
+          // manifest編集
+          const editManifest = (json) => {
+            const origName = json.header?.name || "アドオン";
+            json.header.name = `実績解除可能 ${origName}`;
+            json.header.uuid = crypto.randomUUID();
+            json.header.version = [0, 0, 1];
+            json.header.min_engine_version = json.header.min_engine_version || [1, 2, 6];
+            json.header.vanilla = json.header.vanilla || [1, 12, 0];
+            json.metadata = json.metadata || {};
+            json.metadata.product_type = "addon";
+            if (Array.isArray(json.modules)) {
+              json.modules = json.modules.map(mod => ({
+                ...mod,
+                uuid: crypto.randomUUID(),
+                version: [0, 0, 1],
+                description: mod.description || ""
+              }));
+            }
+            return json;
+          };
+
+          const fixAllManifests = async (targetZip) => {
+            const paths = Object.keys(targetZip.files).filter(p => p.endsWith("manifest.json"));
+            for (const p of paths) {
+              const txt = await targetZip.file(p).async("string");
+              const json = JSON.parse(txt);
+              const edited = editManifest(json);
+              targetZip.file(p, JSON.stringify(edited, null, 4));
+            }
+          };
+
+          if (ext === "mcpack") {
+            await fixAllManifests(zip);
+            modifiedBlob = await zip.generateAsync({ type: "blob" });
+            modifiedName = file.name.replace(/\.mcpack$/i, "_実績解除可能.mcpack");
+          } else if (ext === "mcaddon") {
+            // .mcpack の修正
+            const innerFiles = Object.keys(zip.files);
+            for (const name of innerFiles) {
+              if (name.toLowerCase().endsWith(".mcpack")) {
+                const buf = await zip.file(name).async("arraybuffer");
+                const innerZip = await JSZip.loadAsync(buf);
+                await fixAllManifests(innerZip);
+                const newPackBlob = await innerZip.generateAsync({ type: "blob" });
+                zip.file(name, newPackBlob);
+              }
+            }
+
+            // フォルダ構造の manifest 修正
+            await fixAllManifests(zip);
+            modifiedBlob = await zip.generateAsync({ type: "blob" });
+            modifiedName = file.name.replace(/\.mcaddon$/i, "_modified.mcaddon");
+          } else {
+            throw new Error("対応形式は .mcpack または .mcaddon のみです。");
+          }
+
+          result.textContent = `実績解除可能にしました。ファイルをダウンロードしましょう。`;
+          downloadBtn.disabled = false;
+
+        } catch (err) {
+          console.error(err);
+          result.textContent = "エラー：" + err.message;
+        }
+      });
+
+      downloadBtn.addEventListener("click", () => {
+        if (modifiedBlob) saveAs(modifiedBlob, modifiedName);
+      });
+    })();
+  </script>
+  <section>
+    <p>このツールはclover_creationとcopilotによって作成されました</p>
+  <p>.mcpack、または.mcaddonファイルを選択し、ダウンロードすればそのアドオンは実績解除可能になります</p>
+   <a href="https://minecraft-mcworld.com/147451/"><p>仕組みについてはこちら</p></a>
+  </section>
+</body>
+</html>
